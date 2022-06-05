@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  SOLUTION: ConsoleApp.sln
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v1
+
+      - name: Install .NET tools
+        run: dotnet tool install -g JetBrains.ReSharper.GlobalTools
+
+      - name: Restore NuGet packages
+        run: nuget restore
+
+      - name: Build
+        run: msbuild -verbosity:quiet
+
+      - name: Test
+        run: msbuild -target:test -verbosity:minimal
+
+      - name: Lint (Roslyn analyzers)
+        run: msbuild -target:rebuild -verbosity:quiet -warnaserror
+
+      - name: Lint (ReSharper)
+        run: |
+          $output = New-TemporaryFile
+          jb inspectcode --build --output=$output --verbosity=WARN ${{env.SOLUTION}}
+          $codeIssues = Select-Xml -Path $output -XPath /Report/Issues/Project/Issue | Select-Object -ExpandProperty Node
+          Write-Output $codeIssues
+          exit $codeIssues.Length
+
+      - name: Check format (ReSharper)
+        run: |
+          jb cleanupcode --verbosity=WARN ${{env.SOLUTION}}
+          $diff = git diff
+          Write-Output $diff
+          exit $diff.Length
